@@ -87,6 +87,18 @@ func TestLambdaPermissionGetQualifierFromLambdaAliasOrVersionArn_version(t *test
 	}
 }
 
+func TestLambdaPermissionGetQualifierFromLambdaAliasOrVersionArn_stageVariable(t *testing.T) {
+	arnWithVersion := "arn:aws:lambda:us-west-2:187636751137:function:lambda_function_name:${stageVariables.lambdaAlias}"
+	expectedQualifier := "${stageVariables.lambdaAlias}"
+	qualifier, err := getQualifierFromLambdaAliasOrVersionArn(arnWithVersion)
+	if err != nil {
+		t.Fatalf("Expected no error when getting qualifier: %s", err)
+	}
+	if qualifier != expectedQualifier {
+		t.Fatalf("Expected qualifier to match (%q != %q)", qualifier, expectedQualifier)
+	}
+}
+
 func TestLambdaPermissionGetQualifierFromLambdaAliasOrVersionArn_invalid(t *testing.T) {
 	invalidArn := "arn:aws:lambda:us-west-2:187636751137:function:lambda_function_name"
 	qualifier, err := getQualifierFromLambdaAliasOrVersionArn(invalidArn)
@@ -211,6 +223,54 @@ func TestAccAWSLambdaPermission_withQualifier(t *testing.T) {
 					resource.TestCheckResourceAttr("aws_lambda_permission.with_qualifier", "statement_id", "AllowExecutionWithQualifier"),
 					resource.TestMatchResourceAttr("aws_lambda_permission.with_qualifier", "function_name", endsWithFuncName),
 					resource.TestCheckResourceAttr("aws_lambda_permission.with_qualifier", "qualifier", "testalias_perm_qualifier"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccAWSLambdaPermission_withStageVariableQualifier(t *testing.T) {
+	var statement LambdaPolicyStatement
+	endsWithFuncName := regexp.MustCompile(":function:lambda_function_name_perm_qualifier$")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckAWSLambdaPermissionDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAWSLambdaPermissionConfig_withStageVariableQualifier,
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckLambdaPermissionExists("aws_lambda_permission.with_qualifier", &statement),
+					resource.TestCheckResourceAttr("aws_lambda_permission.with_qualifier", "action", "lambda:InvokeFunction"),
+					resource.TestCheckResourceAttr("aws_lambda_permission.with_qualifier", "principal", "events.amazonaws.com"),
+					resource.TestCheckResourceAttr("aws_lambda_permission.with_qualifier", "statement_id", "AllowExecutionWithQualifier"),
+					resource.TestMatchResourceAttr("aws_lambda_permission.with_qualifier", "function_name", endsWithFuncName),
+					resource.TestCheckResourceAttr("aws_lambda_permission.with_qualifier", "qualifier", "${stageVariables.lambdaAlias}"),
+				),
+			},
+		},
+	})
+}
+
+func TestAccAWSLambdaPermission_withStageVariableSuffix(t *testing.T) {
+	var statement LambdaPolicyStatement
+	endsWithFuncName := regexp.MustCompile(":function:lambda_function_name_perm_qualifier:[$]{stageVariables.lambdaAlias}$")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckAWSLambdaPermissionDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccAWSLambdaPermissionConfig_withStageVariableSuffix,
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckLambdaPermissionExists("aws_lambda_permission.with_qualifier", &statement),
+					resource.TestCheckResourceAttr("aws_lambda_permission.with_qualifier", "action", "lambda:InvokeFunction"),
+					resource.TestCheckResourceAttr("aws_lambda_permission.with_qualifier", "principal", "events.amazonaws.com"),
+					resource.TestCheckResourceAttr("aws_lambda_permission.with_qualifier", "statement_id", "AllowExecutionWithQualifier"),
+					resource.TestMatchResourceAttr("aws_lambda_permission.with_qualifier", "function_name", endsWithFuncName),
+					resource.TestCheckResourceAttr("aws_lambda_permission.with_qualifier", "qualifier", "${stageVariables.lambdaAlias}"),
 				),
 			},
 		},
@@ -543,6 +603,97 @@ resource "aws_lambda_permission" "with_qualifier" {
     source_account = "111122223333"
     source_arn = "arn:aws:events:eu-west-1:111122223333:rule/RunDaily"
     qualifier = "${aws_lambda_alias.test_alias.name}"
+}
+
+resource "aws_lambda_alias" "test_alias" {
+    name = "testalias_perm_qualifier"
+    description = "a sample description"
+    function_name = "${aws_lambda_function.test_lambda.arn}"
+    function_version = "$LATEST"
+}
+
+resource "aws_lambda_function" "test_lambda" {
+    filename = "test-fixtures/lambdatest.zip"
+    function_name = "lambda_function_name_perm_qualifier"
+    role = "${aws_iam_role.iam_for_lambda.arn}"
+    handler = "exports.handler"
+    runtime = "nodejs4.3"
+}
+
+resource "aws_iam_role" "iam_for_lambda" {
+    name = "iam_for_lambda_perm_qualifier"
+    assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": "sts:AssumeRole",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Effect": "Allow",
+      "Sid": ""
+    }
+  ]
+}
+EOF
+}
+`
+
+var testAccAWSLambdaPermissionConfig_withStageVariableQualifier = `
+resource "aws_lambda_permission" "with_qualifier" {
+    statement_id = "AllowExecutionWithQualifier"
+    action = "lambda:InvokeFunction"
+    function_name = "${aws_lambda_function.test_lambda.arn}"
+    principal = "events.amazonaws.com"
+    source_account = "111122223333"
+    source_arn = "arn:aws:events:eu-west-1:111122223333:rule/RunDaily"
+    qualifier = "$${stageVariables.lambdaAlias}"
+}
+
+resource "aws_lambda_alias" "test_alias" {
+    name = "testalias_perm_qualifier"
+    description = "a sample description"
+    function_name = "${aws_lambda_function.test_lambda.arn}"
+    function_version = "$LATEST"
+}
+
+resource "aws_lambda_function" "test_lambda" {
+    filename = "test-fixtures/lambdatest.zip"
+    function_name = "lambda_function_name_perm_qualifier"
+    role = "${aws_iam_role.iam_for_lambda.arn}"
+    handler = "exports.handler"
+    runtime = "nodejs4.3"
+}
+
+resource "aws_iam_role" "iam_for_lambda" {
+    name = "iam_for_lambda_perm_qualifier"
+    assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": "sts:AssumeRole",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Effect": "Allow",
+      "Sid": ""
+    }
+  ]
+}
+EOF
+}
+`
+
+var testAccAWSLambdaPermissionConfig_withStageVariableSuffix = `
+resource "aws_lambda_permission" "with_qualifier" {
+    statement_id = "AllowExecutionWithQualifier"
+    action = "lambda:InvokeFunction"
+    function_name = "${aws_lambda_function.test_lambda.arn}:$${stageVariables.lambdaAlias}"
+    principal = "events.amazonaws.com"
+    source_account = "111122223333"
+    source_arn = "arn:aws:events:eu-west-1:111122223333:rule/RunDaily"
 }
 
 resource "aws_lambda_alias" "test_alias" {
